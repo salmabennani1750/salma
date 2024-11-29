@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestion des Documents</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 0;
+    }
+
+    h1 {
+      text-align: center;
+      color: #333;
+      margin-top: 20px;
+    }
+
+    .document-category {
+      background-color: #fff;
+      margin: 20px;
+      padding: 20px;
+      border-radius: 5px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+
+    h2 {
+      color: #007BFF;
+      margin-bottom: 10px;
+    }
+
+    ul {
+      list-style-type: none;
+      padding: 0;
+    }
+
+    li {
+      margin: 10px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    a {
+      text-decoration: none;
+      color: #333;
+      font-size: 16px;
+      transition: color 0.3s;
+    }
+
+    a:hover {
+      color: #007BFF;
+    }
+
+    .space-buttons, .upload-form {
+      text-align: center;
+      margin-top: 20px;
+    }
+
+    .upload-form input {
+      margin: 5px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Gestion des Documents</h1>
+
+  <!-- Boutons pour basculer entre les espaces -->
+  <div class="space-buttons">
+    <button id="btn-etudiant" onclick="showDocuments('etudiant')">Espace Étudiant</button>
+    <button id="btn-enseignant" onclick="showDocuments('enseignant')">Espace Enseignant</button>
+  </div>
+
+  <div id="documents-container"></div>
+
+  <!-- Formulaire d'upload -->
+  <div class="upload-form">
+    <h2>Ajouter un Document</h2>
+    <input type="file" id="file-input" />
+    <button onclick="uploadFile()">Téléverser</button>
+  </div>
+
+  <script>
+    // SAS Tokens pour les conteneurs
+    const sasTokens = {
+      "etudiant": "https://gestiondoc.blob.core.windows.net/documents-classes?sp=racwdl&st=2024-11-29T14:26:19Z&se=2024-11-30T22:26:19Z&spr=https&sv=2022-11-02&sr=c&sig=BHvN88vAAQH8tojBeu7b%2ByRJ3B3D2zUG6yQ8MtoFwCs%3D",
+      "enseignant": "https://gestiondoc.blob.core.windows.net/documents-enseignants?sp=racwdl&st=2024-11-29T14:28:14Z&se=2024-11-30T22:28:14Z&spr=https&sv=2022-11-02&sr=c&sig=dKStxTyYkmvOaRqkgTwEy9RQb0CKiOV0o9H8kPYr4uE%3D"
+    };
+
+    let currentCategory = "etudiant"; // Catégorie actuelle
+
+    // Fonction pour récupérer les fichiers du conteneur via Azure
+    async function fetchFiles(category) {
+      try {
+        const response = await fetch(sasTokens[category]);
+        if (!response.ok) {
+          throw new Error(`Erreur lors du chargement des fichiers pour ${category}`);
+        }
+        const data = await response.text();
+        return parseXML(data, category);
+      } catch (error) {
+        console.error("Erreur :", error);
+        return [];
+      }
+    }
+
+    // Fonction pour parser les fichiers XML retournés par Azure
+    function parseXML(xmlString, category) {
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+      const blobs = Array.from(xmlDoc.getElementsByTagName("Blob"));
+      const baseUrl = sasTokens[category].split("?")[0];
+      const sasParams = sasTokens[category].split("?")[1];
+      
+      return blobs.map(blob => ({
+        name: blob.getElementsByTagName("Name")[0].textContent,
+        url: `${baseUrl}/${blob.getElementsByTagName("Name")[0].textContent}?${sasParams}`
+      }));
+    }
+
+    // Fonction pour afficher les documents
+    async function renderDocuments(category) {
+      const container = document.getElementById('documents-container');
+      container.innerHTML = '<p>Chargement des fichiers...</p>'; // Indication de chargement
+      const files = await fetchFiles(category);
+
+      container.innerHTML = ''; // Vider le contenu précédent
+      const categoryDiv = document.createElement('div');
+      categoryDiv.classList.add('document-category');
+
+      const categoryTitle = document.createElement('h2');
+      categoryTitle.textContent = category === 'etudiant' ? 'Documents Étudiant' : 'Documents Enseignant';
+      categoryDiv.appendChild(categoryTitle);
+
+      const ul = document.createElement('ul');
+      files.forEach(file => {
+        const li = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = file.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = file.name;
+        li.appendChild(link);
+        ul.appendChild(li);
+      });
+
+      categoryDiv.appendChild(ul);
+      container.appendChild(categoryDiv);
+    }
+
+    // Fonction pour basculer entre les espaces
+    function showDocuments(space) {
+      currentCategory = space;
+      document.getElementById('btn-etudiant').disabled = (space === 'etudiant');
+      document.getElementById('btn-enseignant').disabled = (space === 'enseignant');
+      renderDocuments(space);
+    }
+
+    // Fonction pour téléverser un fichier
+    async function uploadFile() {
+      const fileInput = document.getElementById('file-input');
+      const file = fileInput.files[0];
+      if (!file) {
+        alert("Veuillez sélectionner un fichier à téléverser.");
+        return;
+      }
+
+      const uploadUrl = `${sasTokens[currentCategory].split("?")[0]}/${file.name}?${sasTokens[currentCategory].split("?")[1]}`;
+      try {
+        const response = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: {
+            "x-ms-blob-type": "BlockBlob",
+          },
+          body: file,
+        });
+
+        if (response.ok) {
+          alert("Fichier téléversé avec succès !");
+          renderDocuments(currentCategory); // Actualiser la liste des documents
+        } else {
+          throw new Error("Erreur lors du téléversement du fichier.");
+        }
+      } catch (error) {
+        console.error("Erreur :", error);
+        alert("Impossible de téléverser le fichier.");
+      }
+    }
+
+    // Par défaut, afficher l'espace étudiant
+    window.onload = () => showDocuments('etudiant');
+  </script>
+</body>
+</html>
